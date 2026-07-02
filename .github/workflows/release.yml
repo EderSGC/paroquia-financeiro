@@ -1,0 +1,229 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+            rust_target: aarch64-apple-darwin
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin
+            rust_target: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            args: ''
+            rust_target: ''
+          - platform: windows-latest
+            args: ''
+            rust_target: ''
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfontconfig1-dev pkg-config
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Tauri
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: 'Financeiro Paroquial v__VERSION__'
+          releaseBody: |
+            Instaladores do Financeiro Paroquial.
+
+            **macOS:** Baixar o .dmg correspondente ao seu processador (aarch64 = Apple Silicon, x64 = Intel)
+            **Windows:** Baixar o .msi ou .nsis
+            **Linux:** Baixar o .AppImage ou .deb
+          releaseDraft: false
+          prerelease: false
+          updaterJsonPreferNsis: true
+          includeUpdaterJson: false
+          args: ${{ matrix.args }}
+
+  updater-json:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Install Rust and tauri-cli
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source "$HOME/.cargo/env"
+          cargo install tauri-cli --version "^2" --locked
+
+      - name: Write signing key to file
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" | tr -d '\n\r' > /tmp/tauri-signing.key
+          echo "Key file size: $(wc -c < /tmp/tauri-signing.key) bytes"
+
+      - name: Download and sign updater assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          source "$HOME/.cargo/env"
+          REPO="${{ github.repository }}"
+          TAG="${GITHUB_REF_NAME}"
+          mkdir -p updater-files
+
+          sign_asset() {
+            local asset_name="$1"
+            echo "=== Signing: $asset_name ==="
+
+            if ! gh release download "${TAG}" --repo "${REPO}" --pattern "$asset_name" --dir updater-files/; then
+              echo "  SKIP: Asset not found in release"
+              return 1
+            fi
+
+            echo "  Downloaded: $(ls -la "updater-files/$asset_name")"
+
+            cargo tauri signer sign "updater-files/$asset_name" \
+              --private-key-path /tmp/tauri-signing.key \
+              --password "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
+
+            if [ -f "updater-files/${asset_name}.sig" ]; then
+              echo "  SUCCESS: $(cat "updater-files/${asset_name}.sig" | head -c 60)..."
+              return 0
+            else
+              echo "  FAILED: No .sig file generated"
+              return 1
+            fi
+          }
+
+          # macOS
+          sign_asset "financeiro-paroquial_aarch64.app.tar.gz"
+          sign_asset "financeiro-paroquial_x64.app.tar.gz"
+
+          # Linux
+          sign_asset "financeiro-paroquial_${VERSION}_amd64.AppImage.tar.gz" || \
+            sign_asset "financeiro-paroquial_${VERSION}_amd64.AppImage"
+
+          # Windows (try nsis zip first, then exe, then msi)
+          sign_asset "financeiro-paroquial_${VERSION}_x64-setup.nsis.zip" || \
+            sign_asset "financeiro-paroquial_${VERSION}_x64-setup.exe" || \
+            sign_asset "financeiro-paroquial_${VERSION}_x64_pt-BR.msi"
+
+          echo ""
+          echo "=== All .sig files ==="
+          find updater-files -name "*.sig" -exec echo "  {}" \; -exec cat {} \; -exec echo "" \;
+
+      - name: Generate latest.json
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          REPO="${{ github.repository }}"
+          TAG="${GITHUB_REF_NAME}"
+          BASE="https://github.com/${REPO}/releases/download/${TAG}"
+
+          get_sig() {
+            for name in "$@"; do
+              if [ -f "updater-files/${name}.sig" ]; then
+                cat "updater-files/${name}.sig"
+                return
+              fi
+            done
+            echo ""
+          }
+
+          DARWIN_AARCH64_SIG=$(get_sig "financeiro-paroquial_aarch64.app.tar.gz")
+          DARWIN_X64_SIG=$(get_sig "financeiro-paroquial_x64.app.tar.gz")
+          LINUX_SIG=$(get_sig \
+            "financeiro-paroquial_${VERSION}_amd64.AppImage.tar.gz" \
+            "financeiro-paroquial_${VERSION}_amd64.AppImage")
+
+          # Windows: determine which asset was signed
+          WIN_ASSET=""
+          WINDOWS_SIG=""
+          for name in \
+            "financeiro-paroquial_${VERSION}_x64-setup.nsis.zip" \
+            "financeiro-paroquial_${VERSION}_x64-setup.exe" \
+            "financeiro-paroquial_${VERSION}_x64_pt-BR.msi"; do
+            if [ -f "updater-files/${name}.sig" ]; then
+              WINDOWS_SIG=$(cat "updater-files/${name}.sig")
+              WIN_ASSET="${name}"
+              break
+            fi
+          done
+
+          echo "=== Signatures ==="
+          echo "  darwin-aarch64: ${DARWIN_AARCH64_SIG:0:40}..."
+          echo "  darwin-x64:     ${DARWIN_X64_SIG:0:40}..."
+          echo "  linux:          ${LINUX_SIG:0:40}..."
+          echo "  windows:        ${WINDOWS_SIG:0:40}..."
+
+          EMPTY_COUNT=0
+          [ -z "$DARWIN_AARCH64_SIG" ] && EMPTY_COUNT=$((EMPTY_COUNT + 1))
+          [ -z "$DARWIN_X64_SIG" ] && EMPTY_COUNT=$((EMPTY_COUNT + 1))
+          [ -z "$LINUX_SIG" ] && EMPTY_COUNT=$((EMPTY_COUNT + 1))
+          [ -z "$WINDOWS_SIG" ] && EMPTY_COUNT=$((EMPTY_COUNT + 1))
+
+          if [ "$EMPTY_COUNT" -eq 4 ]; then
+            echo "::error::ALL signatures are empty! The signing key is likely invalid."
+            exit 1
+          fi
+          if [ "$EMPTY_COUNT" -gt 0 ]; then
+            echo "::warning::${EMPTY_COUNT} platform(s) have empty signatures — updater won't work for those"
+          fi
+
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          WIN_URL="${BASE}/${WIN_ASSET:-financeiro-paroquial_${VERSION}_x64-setup.exe}"
+
+          printf '{\n  "version": "%s",\n  "notes": "Financeiro Paroquial v%s",\n  "pub_date": "%s",\n  "platforms": {\n    "darwin-aarch64": {\n      "signature": "%s",\n      "url": "%s/financeiro-paroquial_aarch64.app.tar.gz"\n    },\n    "darwin-x86_64": {\n      "signature": "%s",\n      "url": "%s/financeiro-paroquial_x64.app.tar.gz"\n    },\n    "linux-x86_64": {\n      "signature": "%s",\n      "url": "%s/financeiro-paroquial_%s_amd64.AppImage.tar.gz"\n    },\n    "windows-x86_64": {\n      "signature": "%s",\n      "url": "%s"\n    }\n  }\n}\n' \
+            "$VERSION" "$VERSION" "$DATE" \
+            "$DARWIN_AARCH64_SIG" "$BASE" \
+            "$DARWIN_X64_SIG" "$BASE" \
+            "$LINUX_SIG" "$BASE" "$VERSION" \
+            "$WINDOWS_SIG" "$WIN_URL" > latest.json
+
+          echo ""
+          echo "=== Generated latest.json ==="
+          cat latest.json
+
+      - name: Upload latest.json to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" latest.json --repo "${{ github.repository }}" --clobber
+
+      - name: Cleanup signing key
+        if: always()
+        run: rm -f /tmp/tauri-signing.key

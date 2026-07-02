@@ -1,0 +1,1 @@
+export { FinanceiroPage } from './FinanceiroPage.tsx';

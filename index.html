@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Financeiro Paroquial</title>
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script>
+    // Browser compatibility mock for Tauri APIs
+    if (typeof window.__TAURI__ === 'undefined') {
+      const PROXY = 'http://localhost:7421';
+      window.__TAURI__ = {
+        core: {
+          invoke: async (cmd, args) => {
+            try {
+              const r = await fetch(PROXY, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ command: cmd, args: args || {} })
+              });
+              return r.json();
+            } catch(e) { throw new Error('Tauri proxy unavailable: ' + e.message); }
+          }
+        },
+        invoke: async (cmd, args) => {
+          try {
+            const r = await fetch(PROXY, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({ command: cmd, args: args || {} })
+            });
+            return r.json();
+          } catch(e) { throw new Error('Tauri proxy unavailable: ' + e.message); }
+        }
+      };
+      console.log('[Mock] Tauri APIs mocked via proxy at', PROXY);
+    }
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "financeiro-paroquial",
+  "version": "1.0.0",
+  "identifier": "com.paroquia.financeiro",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Financeiro Paroquial",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 640
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data: blob:; connect-src ipc: http://ipc.localhost https://github.com https://api.github.com https://objects.githubusercontent.com https://github-releases.githubusercontent.com; font-src 'self' data:;"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "publisher": "Financeiro Paroquial",
+    "copyright": "© 2026 Financeiro Paroquial. Todos os direitos reservados.",
+    "category": "Business",
+    "shortDescription": "Gestao financeira para paroquias e comunidades catolicas",
+    "longDescription": "Sistema de gestao financeira paroquial: receitas, despesas, dizimo, caixas e contas, centro de custos, repasses e relatorios. Dados armazenados localmente com seguranca.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ],
+    "windows": {
+      "wix": {
+        "language": "pt-BR"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/EderSGC/paroquia-financeiro/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ3QjAzRDQ0OEU1MDRCQ0IKUldUTFMxQ09SRDJ3MTJMbkxkUHpNMHgvSDh5M0c3RjAwQjFBWk9lL1V3c1NUdit1ZFZ4UjNJM2YK"
+    }
+  }
+}

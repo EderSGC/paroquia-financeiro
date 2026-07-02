@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Impressão</title>
+  <style>
+    @page { size: A4; margin: 0; }
+    html, body { margin: 0; padding: 0; background: white; }
+    #conteudo { background: white; }
+    #loading {
+      position: fixed; inset: 0; background: white;
+      display: flex; align-items: center; justify-content: center;
+      font-family: Inter, -apple-system, sans-serif;
+      font-size: 16px; color: #1f3b73; font-weight: 700;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <div id="loading">Preparando impressão...</div>
+  <div id="conteudo"></div>
+  <script>
+    try {
+      // Modo 1 (documento completo): usado por telas que já montam um HTML
+      // pronto com seu próprio <head>/<style> (ex.: Calendário, com layouts
+      // diferentes por modo dia/semana/mês) — substitui o documento inteiro.
+      const fullHtml = localStorage.getItem("__print_full_html__");
+      // Modo 2 (fragmento): usado pelas telas que clonam um elemento já
+      // renderizado na tela e só precisam do miolo, dentro do layout padrão
+      // desta página (#conteudo).
+      const html = localStorage.getItem("__print_html__");
+
+      function aguardarImagensEImprimir() {
+        const images = document.querySelectorAll("img");
+        const promises = Array.from(images).map(img => {
+          if (img.complete) return Promise.resolve();
+          return new Promise(r => { img.onload = r; img.onerror = r; });
+        });
+        Promise.all(promises).then(() => {
+          const loading = document.getElementById("loading");
+          if (loading) loading.style.display = "none";
+          setTimeout(() => {
+            window.print();
+            setTimeout(() => {
+              try { window.__TAURI__?.invoke("plugin:window|close"); } catch(e) {}
+              window.close();
+            }, 500);
+          }, 400);
+        });
+      }
+
+      if (fullHtml) {
+        localStorage.removeItem("__print_full_html__");
+        document.open();
+        document.write(fullHtml);
+        document.close();
+        aguardarImagensEImprimir();
+      } else if (html) {
+        document.getElementById("conteudo").innerHTML = html;
+        localStorage.removeItem("__print_html__");
+        aguardarImagensEImprimir();
+      } else {
+        document.getElementById("loading").textContent = "Nenhum documento para imprimir.";
+      }
+    } catch(e) {
+      document.getElementById("loading").textContent = "Erro: " + e.message;
+    }
+  </script>
+</body>
+</html>
