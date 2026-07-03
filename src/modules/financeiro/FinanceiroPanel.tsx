@@ -38,7 +38,7 @@ export function FinanceiroPanel() {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const carregar = async () => {
       try {
         const db = await getDb();
         const hoje = new Date();
@@ -125,8 +125,15 @@ export function FinanceiroPanel() {
       } catch (e) {
         console.error("FinanceiroPanel:", e);
       }
-    })();
-    return () => { cancelled = true; };
+    };
+    carregar();
+    // Recarrega quando qualquer mutação do módulo financeiro dispara o evento
+    const onRefresh = () => { carregar(); };
+    window.addEventListener('financeiro:refresh', onRefresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('financeiro:refresh', onRefresh);
+    };
   }, []);
 
   const fmt = (v: number) =>

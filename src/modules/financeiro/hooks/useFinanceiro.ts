@@ -78,6 +78,9 @@ export const useFinanceiro = (options: UseFinanceiroOptions = {}) => {
 
       const cfg = await carregarPartilha();
       setConfigPartilha(cfg);
+
+      // Notifica painéis laterais (FinanceiroPanel) para recarregar após qualquer mutação
+      window.dispatchEvent(new CustomEvent('financeiro:refresh'));
     } catch (error) {
       console.error("Erro ao carregar dados:", error);
     }
@@ -148,6 +151,7 @@ export const useFinanceiro = (options: UseFinanceiroOptions = {}) => {
   const salvarFechamento = useCallback(async (data_: string, unidade: string, dinheiro: number, pix: number, saldoAnterior: number, observacao: string, saldoDisponivel?: number) => {
     try {
       await FinanceiroRepository.caixas.upsert(data_, unidade, dinheiro, pix, saldoAnterior, observacao, saldoDisponivel ?? 0);
+      window.dispatchEvent(new CustomEvent('financeiro:refresh'));
     } catch(e) { console.error(e); }
   }, []);
 
