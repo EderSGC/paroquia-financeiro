@@ -117,7 +117,7 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
   // Histórico
   const [periodoInicio, setPeriodoInicio] = useState(hoje().slice(0,7) + '-01');
   const [periodoFim, setPeriodoFim]       = useState(hoje());
-  const [filtroHist, setFiltroHist]       = useState('TODOS');
+  const [filtroHist, setFiltroHist]       = useState(comunidadeNomeFiltro ?? 'TODOS');
   const [saldoFinalDisponivel, setSaldoFinalDisponivel] = useState(0);
 
   // Preview mensal e diário
@@ -129,7 +129,7 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
 
   // Relatório de repasses
   const [anoRepasse, setAnoRepasse] = useState(new Date().getFullYear());
-  const [unidadeRepasse, setUnidadeRepasse] = useState('TODOS');
+  const [unidadeRepasse, setUnidadeRepasse] = useState(comunidadeNomeFiltro ?? 'TODOS');
   const [dadosRepasse, setDadosRepasse] = useState<RepasseMes[]>([]);
   const [loadingRepasse, setLoadingRepasse] = useState(false);
 
@@ -313,8 +313,10 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
         const mesPrev    = `${anoPrev}-${String(mesPrevNum).padStart(2, '0')}`;
 
         const unitsComMov = await db.select<{ origem: string }[]>(
-          "SELECT DISTINCT origem FROM lancamentos WHERE substr(data,1,7)=? AND deleted_at IS NULL",
-          [mesPrev]
+          comunidadeNomeFiltro
+            ? "SELECT DISTINCT origem FROM lancamentos WHERE substr(data,1,7)=? AND origem=? AND deleted_at IS NULL"
+            : "SELECT DISTINCT origem FROM lancamentos WHERE substr(data,1,7)=? AND deleted_at IS NULL",
+          comunidadeNomeFiltro ? [mesPrev, comunidadeNomeFiltro] : [mesPrev]
         ).catch(() => [] as { origem: string }[]);
         if (unitsComMov.length === 0) return;
 
@@ -365,11 +367,13 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
 
   const carregarLixeira = useCallback(async () => {
     const db = await getDb();
-    const items = await db.select<Lancamento[]>(
-      "SELECT * FROM lancamentos WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 50"
-    ).catch(() => []);
+    // Membro só vê a lixeira da própria comunidade
+    const sql = comunidadeNomeFiltro
+      ? "SELECT * FROM lancamentos WHERE deleted_at IS NOT NULL AND origem = ? ORDER BY deleted_at DESC LIMIT 50"
+      : "SELECT * FROM lancamentos WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 50";
+    const items = await db.select<Lancamento[]>(sql, comunidadeNomeFiltro ? [comunidadeNomeFiltro] : []).catch(() => []);
     setLixeiraItems(items);
-  }, []);
+  }, [comunidadeNomeFiltro]);
 
   useEffect(() => { if (aba === 'repasses') carregarRepasses(); }, [aba, carregarRepasses]);
   useEffect(() => { if (showLixeira) carregarLixeira(); }, [showLixeira, carregarLixeira]);
@@ -505,10 +509,14 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
               </div>
               <div>
                 <label style={lbl}>Comunidade / Unidade</label>
-                <select style={inp} value={editOrigem} onChange={e => setEditOrigem(e.target.value)}>
-                  <option value="">— Selecione —</option>
-                  {comunidades.map(c => <option key={c.id} value={c.nome}>🏘️ {c.nome}</option>)}
-                </select>
+                {isMembro ? (
+                  <div style={{ ...inp, background: '#f5f7fa', color: '#344054', fontWeight: 700 }}>{editOrigem}</div>
+                ) : (
+                  <select style={inp} value={editOrigem} onChange={e => setEditOrigem(e.target.value)}>
+                    <option value="">— Selecione —</option>
+                    {comunidades.map(c => <option key={c.id} value={c.nome}>🏘️ {c.nome}</option>)}
+                  </select>
+                )}
               </div>
             </div>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
@@ -914,10 +922,14 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
             </div>
             <div>
               <label style={lbl}>Unidade</label>
-              <select value={filtroHist} onChange={e => setFiltroHist(e.target.value)} style={inp}>
-                <option value="TODOS">Todas</option>
-                {comunidades.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
-              </select>
+              {isMembro ? (
+                <div style={{ ...inp, background: '#f5f7fa', color: '#344054', fontWeight: 700 }}>{filtroHist}</div>
+              ) : (
+                <select value={filtroHist} onChange={e => setFiltroHist(e.target.value)} style={inp}>
+                  <option value="TODOS">Todas</option>
+                  {comunidades.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
+                </select>
+              )}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 24, marginBottom: 16, padding: '12px 16px', background: '#f9fafb', borderRadius: 10, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1034,10 +1046,14 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
             </div>
             <div>
               <label style={lbl}>Unidade</label>
-              <select style={{ ...inp, width: 220 }} value={unidadeRepasse} onChange={e => setUnidadeRepasse(e.target.value)}>
-                <option value="TODOS">Todas as unidades</option>
-                {comunidades.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
-              </select>
+              {isMembro ? (
+                <div style={{ ...inp, width: 220, background: '#f5f7fa', color: '#344054', fontWeight: 700 }}>{unidadeRepasse}</div>
+              ) : (
+                <select style={{ ...inp, width: 220 }} value={unidadeRepasse} onChange={e => setUnidadeRepasse(e.target.value)}>
+                  <option value="TODOS">Todas as unidades</option>
+                  {comunidades.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
+                </select>
+              )}
             </div>
             <button onClick={carregarRepasses} style={{ padding: '9px 20px', background: '#1f3b73', color: 'white', border: 'none', borderRadius: 8, fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>
               🔍 Atualizar

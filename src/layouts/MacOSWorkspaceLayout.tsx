@@ -85,7 +85,7 @@ function WorkspaceShell({ paroquia, usuario, onParoquiaUpdate, onLogout }: Props
 
     if (mod === "config")     return <SystemConfigPage paroquia={paroquia} usuario={usuario} onParoquiaUpdated={onParoquiaUpdate} />;
     if (mod === "financeiro") return <FinanceiroPage paroquia={paroquia} usuario={usuario} abaPadrao={subPage} />;
-    if (CADASTRO_ABAS[mod])   return <CadastrosPage key={mod} aba={CADASTRO_ABAS[mod]} />;
+    if (CADASTRO_ABAS[mod])   return <CadastrosPage key={mod} aba={CADASTRO_ABAS[mod]} usuario={usuario} />;
 
     return null;
   }
@@ -108,7 +108,7 @@ function WorkspaceShell({ paroquia, usuario, onParoquiaUpdate, onLogout }: Props
   function renderPanel() {
     const mod = activeModule as string;
     if (selectedItem) return <ItemDetailPanel />;
-    if (mod === "financeiro") return <FinanceiroPanel />;
+    if (mod === "financeiro") return <FinanceiroPanel usuario={usuario} />;
     if (mod === "config")     return <ConfiguracoesPanel />;
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 8, padding: "24px 0" }}>

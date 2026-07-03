@@ -59,30 +59,11 @@ const PERMISSOES: Record<PapelUsuario, ModuloPermissoes> = {
 
   paroquia: allModules(FULL),
 
-  vigario: {
-    ...allModules(CRUD_DOC_REP),
-    financeiro: s("visualizar", "acessar_relatorios", "acessar_financeiro"),
-    configuracoes: s("visualizar"),
-    auditoria: s("visualizar"),
-  },
+  // Vigário é juridicamente o ecônomo da paróquia — acesso total (decisão do pároco, 2026-07-03)
+  vigario: allModules(FULL),
 
-  secretaria: {
-    dashboard: fromArray(VIEW_REPORT),
-    fieis: fromArray(CRUD_DOC_REP),
-    familias: fromArray(CRUD_DOC_REP),
-    comunidades: fromArray(CRUD),
-    grupos: fromArray(CRUD),
-    pastorais: fromArray(CRUD),
-    catequese: fromArray(CRUD_DOC_REP),
-    sacramentos: fromArray(CRUD_DOC_REP),
-    financeiro: s("visualizar", "criar", "editar", "acessar_financeiro", "acessar_relatorios"),
-    patrimonio: fromArray(CRUD),
-    agenda: fromArray(CRUD),
-    documentos: fromArray(CRUD_DOC_REP),
-    config: s("visualizar"),
-    configuracoes: s("visualizar"),
-    auditoria: s("visualizar"),
-  },
+  // Secretária com acesso total por decisão do pároco (2026-07-03)
+  secretaria: allModules(FULL),
 
   tesoureiro: {
     dashboard: fromArray(ALL_VIEW),
@@ -104,15 +85,17 @@ const PERMISSOES: Record<PapelUsuario, ModuloPermissoes> = {
     documentos: s("visualizar", "emitir_documento"),
   },
 
+  // Membro opera o caixa da própria comunidade (lançar/editar/excluir),
+  // mas todo dado exibido é filtrado pela comunidade dele — nunca vê outras.
   membro: {
     dashboard: fromArray(ALL_VIEW),
-    fieis: s("visualizar"),
+    fieis: fromArray(CRUD),
     familias: s("visualizar"),
     comunidades: s("visualizar"),
     grupos: s("visualizar"),
     pastorais: s("visualizar"),
     catequese: s("visualizar"),
-    financeiro: s("visualizar"),
+    financeiro: s("visualizar", "criar", "editar", "excluir", "acessar_financeiro", "acessar_relatorios"),
     patrimonio: s("visualizar"),
   },
 };

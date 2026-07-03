@@ -55,6 +55,8 @@ const TABELAS_SINCRONIZAVEIS = [
   "catequese_encontros",
   "catequese_presencas",
   "observacoes_pastorais",
+  "lancamentos",
+  "caixa_fechamento",
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -79,6 +81,8 @@ export function getTabelasSincronizaveis(): { nome: string; label: string }[] {
     catequese_encontros: "Encontros de Catequese",
     catequese_presencas: "Presenças de Catequese",
     observacoes_pastorais: "Observações Pastorais",
+    lancamentos: "Financeiro — Lançamentos (Livro Caixa)",
+    caixa_fechamento: "Financeiro — Fechamentos de Caixa (Conferência Física)",
   };
   return TABELAS_SINCRONIZAVEIS.map(nome => ({ nome, label: labels[nome] || nome }));
 }
@@ -108,6 +112,10 @@ export async function exportarRegistros(opts: SyncExportOptions): Promise<string
 
     const hasComunidadeId = schema.columns.some(c => c.name === "comunidade_id");
     const hasComunidade = schema.columns.some(c => c.name === "comunidade");
+    // Tabelas do financeiro guardam a comunidade pelo nome em colunas próprias:
+    // lancamentos.origem e caixa_fechamento.unidade
+    const hasOrigem = schema.columns.some(c => c.name === "origem");
+    const hasUnidade = schema.columns.some(c => c.name === "unidade");
     const hasDeletedAt = schema.columns.some(c => c.name === "deleted_at");
 
     let sql = `SELECT * FROM "${tabela}" WHERE 1=1`;
@@ -120,11 +128,15 @@ export async function exportarRegistros(opts: SyncExportOptions): Promise<string
     if (opts.comunidadeId && hasComunidadeId) {
       sql += " AND comunidade_id = ?";
       params.push(opts.comunidadeId);
-    } else if (opts.comunidadeId && hasComunidade && !hasComunidadeId) {
-      if (comunidadeNome) {
-        sql += " AND comunidade = ?";
-        params.push(comunidadeNome);
-      }
+    } else if (opts.comunidadeId && comunidadeNome && hasComunidade) {
+      sql += " AND comunidade = ?";
+      params.push(comunidadeNome);
+    } else if (opts.comunidadeId && comunidadeNome && hasOrigem) {
+      sql += " AND origem = ?";
+      params.push(comunidadeNome);
+    } else if (opts.comunidadeId && comunidadeNome && hasUnidade) {
+      sql += " AND unidade = ?";
+      params.push(comunidadeNome);
     }
 
     const rows = await db.select<Record<string, unknown>[]>(sql, params);
@@ -222,7 +234,12 @@ export async function importarRegistros(usuarioId?: number): Promise<SyncImportR
       const schema = EXPECTED_SCHEMA.find(s => s.name === tabela);
       if (!schema) continue;
 
-      const colunasSchema = schema.columns.map(c => c.name);
+      let colunasSchema = schema.columns.map(c => c.name);
+      // fiel_id é um id local de cada instalação — importado, apontaria para o
+      // fiel errado. O nome do fiel já viaja em "descricao", então descartamos.
+      if (tabela === "lancamentos") {
+        colunasSchema = colunasSchema.filter(c => c !== "fiel_id");
+      }
       const hasUuid = colunasSchema.includes("uuid");
       let inseridos = 0;
       let atualizados = 0;

@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { getDb } from "@core/database";
 import { calcularRepasse, dbRowToPartilha } from "./services/repasse.service";
 import { PanelSection, PanelDivider, PanelRow } from "@/components/ui/SectionHeader";
+import { hasPermission } from "@core/auth/permissions";
+import type { Usuario } from "@core/types/app.types";
 
 interface UnitData {
   unidade: string;
@@ -33,8 +35,13 @@ function toNum(v: unknown): number {
 }
 
 
-export function FinanceiroPanel() {
+export function FinanceiroPanel({ usuario }: { usuario?: Usuario }) {
   const [data, setData] = useState<Stats>(empty);
+
+  // Mesma regra da FinanceiroPage: quem não acessa configurações do financeiro
+  // (membro de comunidade) só enxerga os números da própria comunidade.
+  const isMembro = usuario ? !hasPermission(usuario.papel, "financeiro", "acessar_configuracoes") : false;
+  const comunidadeFiltro = isMembro ? (usuario?.comunidade_nome ?? null) : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -44,6 +51,8 @@ export function FinanceiroPanel() {
         const hoje = new Date();
         const anoMes = hoje.toISOString().slice(0, 7);
         const ano = String(hoje.getFullYear());
+        const comSql = comunidadeFiltro ? " AND origem = ?" : "";
+        const comParam = comunidadeFiltro ? [comunidadeFiltro] : [];
 
         // Helper: executa query e devolve o primeiro valor como número
         const num = async (sql: string, p: unknown[] = []): Promise<number> => {
@@ -62,11 +71,11 @@ export function FinanceiroPanel() {
 
         // Métricas mensais (bruto, do lançamentos)
         const [receitaMes, despesaMes, receitaAno, despesaAno, lancamentosMes] = await Promise.all([
-          num("SELECT COALESCE(SUM(valor),0) FROM lancamentos WHERE tipo='ENTRADA' AND substr(data,1,7)=? AND deleted_at IS NULL", [anoMes]),
-          num("SELECT COALESCE(SUM(valor),0) FROM lancamentos WHERE tipo='SAIDA'   AND substr(data,1,7)=? AND deleted_at IS NULL", [anoMes]),
-          num("SELECT COALESCE(SUM(valor),0) FROM lancamentos WHERE tipo='ENTRADA' AND substr(data,1,4)=? AND deleted_at IS NULL", [ano]),
-          num("SELECT COALESCE(SUM(valor),0) FROM lancamentos WHERE tipo='SAIDA'   AND substr(data,1,4)=? AND deleted_at IS NULL", [ano]),
-          num("SELECT COUNT(*) FROM lancamentos WHERE substr(data,1,7)=? AND deleted_at IS NULL", [anoMes]),
+          num(`SELECT COALESCE(SUM(valor),0) FROM lancamentos WHERE tipo='ENTRADA' AND substr(data,1,7)=? AND deleted_at IS NULL${comSql}`, [anoMes, ...comParam]),
+          num(`SELECT COALESCE(SUM(valor),0) FROM lancamentos WHERE tipo='SAIDA'   AND substr(data,1,7)=? AND deleted_at IS NULL${comSql}`, [anoMes, ...comParam]),
+          num(`SELECT COALESCE(SUM(valor),0) FROM lancamentos WHERE tipo='ENTRADA' AND substr(data,1,4)=? AND deleted_at IS NULL${comSql}`, [ano, ...comParam]),
+          num(`SELECT COALESCE(SUM(valor),0) FROM lancamentos WHERE tipo='SAIDA'   AND substr(data,1,4)=? AND deleted_at IS NULL${comSql}`, [ano, ...comParam]),
+          num(`SELECT COUNT(*) FROM lancamentos WHERE substr(data,1,7)=? AND deleted_at IS NULL${comSql}`, [anoMes, ...comParam]),
         ]);
 
         const { totalRepasse, saldoDisponivel: saldoRealMes } = calcularRepasse(receitaMes - despesaMes, dbRowToPartilha(cfg));
@@ -75,7 +84,8 @@ export function FinanceiroPanel() {
         // Lógica: último fechamento salvo + movimentos PÓS-fechamento com repasse aplicado
         const unitsResult = await db
           .select<{ origem: string }[]>(
-            "SELECT DISTINCT origem FROM lancamentos WHERE origem IS NOT NULL AND origem != '' AND deleted_at IS NULL ORDER BY origem"
+            `SELECT DISTINCT origem FROM lancamentos WHERE origem IS NOT NULL AND origem != '' AND deleted_at IS NULL${comSql} ORDER BY origem`,
+            comParam
           )
           .catch(() => [] as { origem: string }[]);
 
@@ -134,7 +144,7 @@ export function FinanceiroPanel() {
       cancelled = true;
       window.removeEventListener('financeiro:refresh', onRefresh);
     };
-  }, []);
+  }, [comunidadeFiltro]);
 
   const fmt = (v: number) =>
     new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);

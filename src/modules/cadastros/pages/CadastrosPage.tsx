@@ -8,6 +8,8 @@ import { FielService } from '@core/services/fiel.service';
 import { useToast } from '@core/ui/Toast';
 import { ModalConfirm } from '@core/ui/Modal';
 import type { Comunidade, Fiel } from '@core/types/entities';
+import { hasPermission } from '@core/auth/permissions';
+import type { Usuario } from '@core/types/app.types';
 
 export type AbaCadastro = 'comunidades' | 'fieis' | 'dizimistas';
 
@@ -28,8 +30,9 @@ const TITULOS: Record<AbaCadastro, { titulo: string; subtitulo: string }> = {
 };
 
 /* ─── Comunidades ─────────────────────────────────────────────── */
-function CadastroComunidades() {
+function CadastroComunidades({ comunidadeFiltro }: { comunidadeFiltro: string | null }) {
   const { showToast } = useToast();
+  const somenteLeitura = !!comunidadeFiltro; // membro não cria/edita/exclui comunidades
   const [lista, setLista] = useState<Comunidade[]>([]);
   const [editandoId, setEditandoId] = useState<number | null>(null);
   const [nome, setNome] = useState('');
@@ -39,9 +42,12 @@ function CadastroComunidades() {
   const [idExcluir, setIdExcluir] = useState<number | null>(null);
 
   const carregar = useCallback(async () => {
-    try { setLista(await PastoralRepository.comunidades.findAllOrdenadas()); }
+    try {
+      const todas = await PastoralRepository.comunidades.findAllOrdenadas();
+      setLista(comunidadeFiltro ? todas.filter(c => c.nome === comunidadeFiltro) : todas);
+    }
     catch (e) { console.error(e); showToast('Erro ao carregar comunidades.', 'error'); }
-  }, [showToast]);
+  }, [showToast, comunidadeFiltro]);
 
   useEffect(() => { carregar(); }, [carregar]);
 
@@ -87,6 +93,7 @@ function CadastroComunidades() {
 
   return (
     <>
+      {!somenteLeitura && (
       <form onSubmit={salvar} style={{ ...card, marginBottom: 16 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 2fr', gap: 12, marginBottom: 12 }}>
           <div>
@@ -111,6 +118,7 @@ function CadastroComunidades() {
           {editandoId && <button type="button" style={btnAcao} onClick={limpar}>Cancelar</button>}
         </div>
       </form>
+      )}
 
       <div style={card}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -119,24 +127,26 @@ function CadastroComunidades() {
               <th style={th}>Nome</th>
               <th style={th}>Endereço</th>
               <th style={th}>Coordenador(a)</th>
-              <th style={{ ...th, width: 140 }}>Ações</th>
+              {!somenteLeitura && <th style={{ ...th, width: 140 }}>Ações</th>}
             </tr>
           </thead>
           <tbody>
             {lista.length === 0 && (
-              <tr><td style={{ ...td, color: '#98a2b3', textAlign: 'center' }} colSpan={4}>Nenhuma comunidade cadastrada ainda.</td></tr>
+              <tr><td style={{ ...td, color: '#98a2b3', textAlign: 'center' }} colSpan={somenteLeitura ? 3 : 4}>Nenhuma comunidade cadastrada ainda.</td></tr>
             )}
             {lista.map(c => (
               <tr key={c.id}>
                 <td style={{ ...td, fontWeight: 600 }}>{c.nome}</td>
                 <td style={td}>{c.endereco || '—'}</td>
                 <td style={td}>{c.coordenador_nome ? `${c.coordenador_nome}${c.coordenador_tel ? ` · ${c.coordenador_tel}` : ''}` : '—'}</td>
+                {!somenteLeitura && (
                 <td style={td}>
                   <div style={{ display: 'flex', gap: 6 }}>
                     <button style={btnAcao} onClick={() => editar(c)}>Editar</button>
                     <button style={btnPerigo} onClick={() => setIdExcluir(c.id)}>Excluir</button>
                   </div>
                 </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -156,7 +166,7 @@ function CadastroComunidades() {
 }
 
 /* ─── Fiéis / Dizimistas ──────────────────────────────────────── */
-function CadastroFieis({ somenteDizimistas }: { somenteDizimistas: boolean }) {
+function CadastroFieis({ somenteDizimistas, comunidadeFiltro }: { somenteDizimistas: boolean; comunidadeFiltro: string | null }) {
   const { showToast } = useToast();
   const [lista, setLista] = useState<Fiel[]>([]);
   const [comunidades, setComunidades] = useState<{ id: number; nome: string }[]>([]);
@@ -164,7 +174,7 @@ function CadastroFieis({ somenteDizimistas }: { somenteDizimistas: boolean }) {
   const [editandoId, setEditandoId] = useState<number | null>(null);
   const [nome, setNome] = useState('');
   const [telefone, setTelefone] = useState('');
-  const [comunidade, setComunidade] = useState('');
+  const [comunidade, setComunidade] = useState(comunidadeFiltro ?? '');
   const [dizimista, setDizimista] = useState(somenteDizimistas);
   const [idExcluir, setIdExcluir] = useState<number | null>(null);
 
@@ -174,15 +184,17 @@ function CadastroFieis({ somenteDizimistas }: { somenteDizimistas: boolean }) {
         PastoralRepository.fieis.findAllOrdenados(1000),
         PastoralRepository.comunidades.findNomes(),
       ]);
-      setLista(somenteDizimistas ? fs.filter(f => f.isDizimista === 1) : fs);
+      // Membro só vê os fiéis/dizimistas da própria comunidade
+      const visiveis = comunidadeFiltro ? fs.filter(f => f.comunidade === comunidadeFiltro) : fs;
+      setLista(somenteDizimistas ? visiveis.filter(f => f.isDizimista === 1) : visiveis);
       setComunidades(cs);
     } catch (e) { console.error(e); showToast('Erro ao carregar fiéis.', 'error'); }
-  }, [somenteDizimistas, showToast]);
+  }, [somenteDizimistas, showToast, comunidadeFiltro]);
 
   useEffect(() => { carregar(); }, [carregar]);
 
   function limpar() {
-    setEditandoId(null); setNome(''); setTelefone(''); setComunidade(''); setDizimista(somenteDizimistas);
+    setEditandoId(null); setNome(''); setTelefone(''); setComunidade(comunidadeFiltro ?? ''); setDizimista(somenteDizimistas);
   }
 
   function editar(f: Fiel) {
@@ -258,10 +270,14 @@ function CadastroFieis({ somenteDizimistas }: { somenteDizimistas: boolean }) {
           </div>
           <div>
             <label style={lbl}>Comunidade</label>
-            <select style={inp} value={comunidade} onChange={e => setComunidade(e.target.value)}>
-              <option value="">— Selecione —</option>
-              {comunidades.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
-            </select>
+            {comunidadeFiltro ? (
+              <div style={{ ...inp, background: '#f5f7fa', color: '#344054', fontWeight: 700 }}>{comunidadeFiltro}</div>
+            ) : (
+              <select style={inp} value={comunidade} onChange={e => setComunidade(e.target.value)}>
+                <option value="">— Selecione —</option>
+                {comunidades.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
+              </select>
+            )}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
@@ -342,17 +358,20 @@ function CadastroFieis({ somenteDizimistas }: { somenteDizimistas: boolean }) {
 }
 
 /* ─── Página ──────────────────────────────────────────────────── */
-export function CadastrosPage({ aba }: { aba: AbaCadastro }) {
+export function CadastrosPage({ aba, usuario }: { aba: AbaCadastro; usuario?: Usuario }) {
   const { titulo, subtitulo } = TITULOS[aba];
+  // Mesma regra do módulo financeiro: membro de comunidade só vê a própria comunidade
+  const isMembro = usuario ? !hasPermission(usuario.papel, 'financeiro', 'acessar_configuracoes') : false;
+  const comunidadeFiltro = isMembro ? (usuario?.comunidade_nome ?? null) : null;
   return (
     <div style={{ padding: 24, maxWidth: 1100 }}>
       <div style={{ marginBottom: 16 }}>
         <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: '#1d2939' }}>{titulo}</h1>
         <p style={{ margin: '4px 0 0', fontSize: 13, color: '#667085' }}>{subtitulo}</p>
       </div>
-      {aba === 'comunidades' && <CadastroComunidades />}
-      {aba === 'fieis' && <CadastroFieis somenteDizimistas={false} />}
-      {aba === 'dizimistas' && <CadastroFieis key="diz" somenteDizimistas={true} />}
+      {aba === 'comunidades' && <CadastroComunidades comunidadeFiltro={comunidadeFiltro} />}
+      {aba === 'fieis' && <CadastroFieis somenteDizimistas={false} comunidadeFiltro={comunidadeFiltro} />}
+      {aba === 'dizimistas' && <CadastroFieis key="diz" somenteDizimistas={true} comunidadeFiltro={comunidadeFiltro} />}
     </div>
   );
 }

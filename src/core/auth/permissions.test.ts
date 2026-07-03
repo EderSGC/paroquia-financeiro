@@ -15,11 +15,17 @@ describe("hasPermission", () => {
     expect(hasPermission("paroquia", "configuracoes", "restaurar_backup")).toBe(true);
   });
 
-  it("secretária pode criar fiéis mas não restaurar backup", () => {
+  it("secretária tem acesso total (decisão do pároco, 2026-07-03)", () => {
     expect(hasPermission("secretaria", "fieis", "criar")).toBe(true);
     expect(hasPermission("secretaria", "fieis", "editar")).toBe(true);
-    expect(hasPermission("secretaria", "configuracoes", "restaurar_backup")).toBe(false);
-    expect(hasPermission("secretaria", "configuracoes", "gerenciar_usuarios")).toBe(false);
+    expect(hasPermission("secretaria", "financeiro", "excluir")).toBe(true);
+    expect(hasPermission("secretaria", "financeiro", "acessar_configuracoes")).toBe(true);
+  });
+
+  it("vigário (ecônomo) tem acesso total ao financeiro", () => {
+    expect(hasPermission("vigario", "financeiro", "criar")).toBe(true);
+    expect(hasPermission("vigario", "financeiro", "excluir")).toBe(true);
+    expect(hasPermission("vigario", "financeiro", "acessar_configuracoes")).toBe(true);
   });
 
   it("tesoureiro só acessa financeiro e patrimônio com CRUD", () => {
@@ -38,11 +44,14 @@ describe("hasPermission", () => {
     expect(hasPermission("catequista", "fieis", "visualizar")).toBe(true);
   });
 
-  it("membro tem apenas visualização", () => {
+  it("membro opera o caixa e os fiéis da própria comunidade, sem configurações", () => {
     expect(hasPermission("membro", "fieis", "visualizar")).toBe(true);
-    expect(hasPermission("membro", "fieis", "criar")).toBe(false);
+    expect(hasPermission("membro", "fieis", "criar")).toBe(true);
     expect(hasPermission("membro", "financeiro", "visualizar")).toBe(true);
-    expect(hasPermission("membro", "financeiro", "criar")).toBe(false);
+    expect(hasPermission("membro", "financeiro", "criar")).toBe(true);
+    expect(hasPermission("membro", "financeiro", "excluir")).toBe(true);
+    // Sem acessar_configuracoes: é isso que trava todos os filtros na comunidade dele
+    expect(hasPermission("membro", "financeiro", "acessar_configuracoes")).toBe(false);
     expect(hasPermission("membro", "configuracoes", "visualizar")).toBe(false);
   });
 
