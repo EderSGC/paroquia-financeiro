@@ -6,7 +6,7 @@ import { hasPermission } from '@core/auth/permissions';
 import type { ConfiguracaoPartilha } from '../../../core/types/entities';
 import { getDb } from '@core/database';
 import { FinanceiroRepository } from '../repository/financeiro.repository';
-import { calcularRepasse, dbRowToPartilha } from '../services/repasse.service';
+import { calcularRepasse, dbRowToPartilha, resolverSaldoAnteriorConciliado } from '../services/repasse.service';
 import { RelatorioMensalPreview } from '../components/RelatorioMensalPreview';
 import { RelatorioDiarioPreview } from '../components/RelatorioDiarioPreview';
 import { useToast } from '@core/ui/Toast';
@@ -160,88 +160,11 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
 
     if (!unidade) return; // sem comunidade selecionada ainda
 
-    // ── Saldo Anterior Conciliado: SEMPRE calculado do mês anterior ──────────
+    // ── Saldo Anterior Conciliado: fonte única compartilhada com os relatórios ──
     try {
-      const db = await getDb();
-
-      const mesSel = dataSel.slice(0, 7); // YYYY-MM do período selecionado
-
-      // Lê a config da partilha do DB (independente do estado React — sem problema de timing)
-      const cfgRows = await db.select<ConfiguracaoPartilha[]>("SELECT * FROM configuracoes_partilha WHERE id=1 LIMIT 1");
-      const cfg = (cfgRows[0] ?? { id: 1, comunidade: 30, area_missionaria: 40, arquidiocese: 29, fundo_missionario: 1 }) as unknown as Record<string, unknown>;
-
-      // Função auxiliar: calcula o Saldo Final Disponível de qualquer mês a partir do DB
-      const calcSaldoFinalMes = async (mes: string): Promise<number> => {
-        // Saldo com que o mês começou (primeiro fechamento do mês)
-        const primFechs = await db.select<{ saldo_anterior: number | null }[]>(
-          "SELECT saldo_anterior FROM caixa_fechamento WHERE data LIKE $1 AND unidade = $2 AND saldo_anterior > 0 ORDER BY data ASC LIMIT 1",
-          [`${mes}%`, unidade]
-        );
-        const saldoInicio = Number(primFechs[0]?.saldo_anterior ?? 0);
-
-        // Movimento total do mês
-        const lancs = await db.select<{ tipo: string; valor: number }[]>(
-          "SELECT tipo, valor FROM lancamentos WHERE data LIKE $1 AND origem = $2 AND deleted_at IS NULL",
-          [`${mes}%`, unidade]
-        );
-        const ent = lancs.filter(r => r.tipo === 'ENTRADA').reduce((s, r) => s + r.valor, 0);
-        const sai = lancs.filter(r => r.tipo === 'SAIDA').reduce((s, r) => s + r.valor, 0);
-        const base = Math.max(0, ent - sai);
-
-        const { saldoDisponivel } = calcularRepasse(base, dbRowToPartilha(cfg));
-        return saldoInicio + saldoDisponivel;
-      };
-
-      const primeiroDiaMes = `${mesSel}-01`;
-
-      // ── Passo 1: Melhor dado de qualquer mês anterior com saldo_disponivel salvo ──
-      const fechDisp = await db.select<{ saldo_disponivel: number | null; data: string }[]>(
-        "SELECT saldo_disponivel, data FROM caixa_fechamento WHERE data < $1 AND unidade = $2 AND saldo_disponivel > 0 ORDER BY data DESC LIMIT 1",
-        [primeiroDiaMes, unidade]
-      );
-      if (fechDisp.length > 0) {
-        setSaldoAnterior(String(Number(fechDisp[0].saldo_disponivel)));
-        setSaldoAnteriorBloqueado(true);
-        return;
-      }
-
-      // ── Passo 2: Reconstrói o Saldo Final Disponível do mês imediatamente anterior ──
-      const [anoSel, mesSel2] = mesSel.split('-').map(Number);
-      const mesAntNum = mesSel2 === 1 ? 12 : mesSel2 - 1;
-      const anoAnt   = mesSel2 === 1 ? anoSel - 1 : anoSel;
-      const mesAnt   = `${anoAnt}-${String(mesAntNum).padStart(2, '0')}`;
-
-      const saldoFinalMesAnt = await calcSaldoFinalMes(mesAnt);
-      if (saldoFinalMesAnt > 0) {
-        setSaldoAnterior(String(saldoFinalMesAnt));
-        setSaldoAnteriorBloqueado(true);
-        return;
-      }
-
-      // ── Passo 3: Qualquer saldo_anterior > 0 de qualquer mês anterior (último dado histórico) ──
-      const fechQualquer = await db.select<{ saldo_anterior: number | null; data: string }[]>(
-        "SELECT saldo_anterior, data FROM caixa_fechamento WHERE data < $1 AND unidade = $2 AND saldo_anterior > 0 ORDER BY data DESC LIMIT 1",
-        [primeiroDiaMes, unidade]
-      );
-      if (fechQualquer.length > 0) {
-        setSaldoAnterior(String(Number(fechQualquer[0].saldo_anterior)));
-        setSaldoAnteriorBloqueado(true);
-        return;
-      }
-
-      // ── Passo 4: saldo_anterior do mês atual (valor que o usuário digitou ao abrir este mês) ──
-      const fechMesAtual = await db.select<{ saldo_anterior: number | null }[]>(
-        "SELECT saldo_anterior FROM caixa_fechamento WHERE data LIKE $1 AND unidade = $2 AND saldo_anterior > 0 ORDER BY data ASC LIMIT 1",
-        [`${mesSel}%`, unidade]
-      );
-      if (fechMesAtual.length > 0) {
-        setSaldoAnterior(String(Number(fechMesAtual[0].saldo_anterior)));
-        setSaldoAnteriorBloqueado(true);
-        return;
-      }
-
-      setSaldoAnterior('0');
-      setSaldoAnteriorBloqueado(false);
+      const { valor, encontrado } = await resolverSaldoAnteriorConciliado(dataSel.slice(0, 7), unidade);
+      setSaldoAnterior(String(valor));
+      setSaldoAnteriorBloqueado(encontrado);
     } catch (err) { console.error('[carregarConferencia] erro:', err); setSaldoAnterior('0'); setSaldoAnteriorBloqueado(false); }
   }, [dataSel, dataSelFim, unidade, buscarFechamento]);
 

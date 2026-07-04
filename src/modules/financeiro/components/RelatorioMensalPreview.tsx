@@ -4,7 +4,7 @@ import { DocumentHeader } from '@core/components/DocumentHeader';
 import { dispararImpressaoFiel } from '../utils/printHelper';
 import type { Paroquia } from '../../../core/types/app.types';
 import type { Lancamento } from '../services';
-import type { ConfiguracaoPartilha } from '../../../core/types/entities';
+import { resolverSaldoAnteriorConciliado } from '../services/repasse.service';
 
 interface PartilhaResult {
   comunidade: number;
@@ -68,45 +68,10 @@ export function RelatorioMensalPreview({ paroquia, unidade, mes, lancamentos, co
         setDinheiroMes(entradasMes.find(r => r.metodo === 'DINHEIRO')?.total ?? 0);
         setPixMes(entradasMes.find(r => r.metodo === 'PIX')?.total ?? 0);
 
-        // Calcula o mês anterior ao mês do relatório
-        const [anoMes, numMes] = mes.split('-').map(Number);
-        const mesAntNum = numMes === 1 ? 12 : numMes - 1;
-        const anoAnt    = numMes === 1 ? anoMes - 1 : anoMes;
-        const mesAnt    = `${anoAnt}-${String(mesAntNum).padStart(2, '0')}`;
-
-        // Tenta usar saldo_disponivel já gravado do mês anterior (dado novo)
-        const fechUltAnt = await db.select<{ saldo_disponivel: number | null }[]>(
-          "SELECT saldo_disponivel FROM caixa_fechamento WHERE data LIKE $1 AND unidade = $2 AND saldo_disponivel > 0 ORDER BY data DESC LIMIT 1",
-          [`${mesAnt}%`, unidade]
-        );
-        if (fechUltAnt.length > 0) {
-          setSaldoAnterior(Number(fechUltAnt[0].saldo_disponivel));
-        } else {
-          // Reconstrói o Saldo Final Disponível do mês anterior a partir dos lançamentos
-          const cfgRows = await db.select<ConfiguracaoPartilha[]>("SELECT * FROM configuracoes_partilha WHERE id=1 LIMIT 1");
-          const cfg = cfgRows[0] ?? { id: 1, comunidade: 30, area_missionaria: 40, arquidiocese: 29, fundo_missionario: 1 };
-
-          const primFechAnt = await db.select<{ saldo_anterior: number | null }[]>(
-            "SELECT saldo_anterior FROM caixa_fechamento WHERE data LIKE $1 AND unidade = $2 AND saldo_anterior > 0 ORDER BY data ASC LIMIT 1",
-            [`${mesAnt}%`, unidade]
-          );
-          const saldoInicioAnt = Number(primFechAnt[0]?.saldo_anterior ?? 0);
-
-          const lancsAnt = await db.select<{ tipo: string; valor: number }[]>(
-            "SELECT tipo, valor FROM lancamentos WHERE data LIKE $1 AND origem = $2 AND deleted_at IS NULL",
-            [`${mesAnt}%`, unidade]
-          );
-          const entAnt = lancsAnt.filter(r => r.tipo === 'ENTRADA').reduce((s, r) => s + r.valor, 0);
-          const saiAnt = lancsAnt.filter(r => r.tipo === 'SAIDA').reduce((s, r) => s + r.valor, 0);
-          const base = Math.max(0, entAnt - saiAnt);
-          const c1 = base * ((cfg.comunidade ?? 30) / 100);
-          const c2 = (base - c1) * ((cfg.area_missionaria ?? 40) / 100);
-          const c3 = (base - c1 - c2) * ((cfg.arquidiocese ?? 29) / 100);
-          const c4 = (base - c1 - c2 - c3) * ((cfg.fundo_missionario ?? 1) / 100);
-          const saldoLiquido = base - c1 - c2 - c3 - c4;
-
-          setSaldoAnterior(saldoInicioAnt + saldoLiquido);
-        }
+        // Saldo Anterior Conciliado: mesma fonte usada pela tela de Conferência Física,
+        // para que a folha impressa registre exatamente o valor exibido no sistema.
+        const { valor } = await resolverSaldoAnteriorConciliado(mes, unidade);
+        setSaldoAnterior(valor);
       } catch { /* silencioso */ }
     };
     carregar();

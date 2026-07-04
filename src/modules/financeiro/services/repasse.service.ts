@@ -1,3 +1,4 @@
+import { getDb } from '@core/database';
 import type { ConfigPartilha } from '../../auth/services/auth.service';
 
 export interface ResultadoRepasse {
@@ -58,4 +59,93 @@ export function dbRowToPartilha(row: Record<string, unknown>): ConfigPartilha {
     arquidiocese:     n(row.arquidiocese),
     fundoMissionario: n(row.fundo_missionario),
   };
+}
+
+export interface SaldoAnteriorResolvido {
+  valor: number;
+  /** true quando o valor veio de dado gravado no banco — a tela bloqueia a edição nesse caso */
+  encontrado: boolean;
+}
+
+/**
+ * Resolve o Saldo Anterior Conciliado de um mês/unidade.
+ *
+ * Fonte única usada pela tela de Conferência Física E pelos relatórios
+ * impressos — os dois precisam exibir sempre o mesmo valor.
+ *
+ * Ordem de busca:
+ *   1. Último saldo_disponivel > 0 gravado em qualquer mês anterior
+ *   2. Saldo Final Disponível reconstruído do mês imediatamente anterior
+ *   3. Último saldo_anterior > 0 gravado em qualquer mês anterior
+ *   4. saldo_anterior > 0 digitado no próprio mês (primeiro fechamento do mês)
+ */
+export async function resolverSaldoAnteriorConciliado(mes: string, unidade: string): Promise<SaldoAnteriorResolvido> {
+  const db = await getDb();
+
+  const cfgRows = await db.select<Record<string, unknown>[]>(
+    "SELECT * FROM configuracoes_partilha WHERE id=1 LIMIT 1"
+  );
+  const cfg = cfgRows[0] ?? { comunidade: 30, area_missionaria: 40, arquidiocese: 29, fundo_missionario: 1 };
+
+  // Calcula o Saldo Final Disponível de um mês a partir dos dados do banco
+  const calcSaldoFinalMes = async (m: string): Promise<number> => {
+    const primFechs = await db.select<{ saldo_anterior: number | null }[]>(
+      "SELECT saldo_anterior FROM caixa_fechamento WHERE data LIKE $1 AND unidade = $2 AND saldo_anterior > 0 ORDER BY data ASC LIMIT 1",
+      [`${m}%`, unidade]
+    );
+    const saldoInicio = Number(primFechs[0]?.saldo_anterior ?? 0);
+
+    const lancs = await db.select<{ tipo: string; valor: number }[]>(
+      "SELECT tipo, valor FROM lancamentos WHERE data LIKE $1 AND origem = $2 AND deleted_at IS NULL",
+      [`${m}%`, unidade]
+    );
+    const ent = lancs.filter(r => r.tipo === 'ENTRADA').reduce((s, r) => s + r.valor, 0);
+    const sai = lancs.filter(r => r.tipo === 'SAIDA').reduce((s, r) => s + r.valor, 0);
+    const base = Math.max(0, ent - sai);
+
+    const { saldoDisponivel } = calcularRepasse(base, dbRowToPartilha(cfg));
+    return saldoInicio + saldoDisponivel;
+  };
+
+  const primeiroDiaMes = `${mes}-01`;
+
+  // ── Passo 1: Melhor dado de qualquer mês anterior com saldo_disponivel salvo ──
+  const fechDisp = await db.select<{ saldo_disponivel: number | null }[]>(
+    "SELECT saldo_disponivel FROM caixa_fechamento WHERE data < $1 AND unidade = $2 AND saldo_disponivel > 0 ORDER BY data DESC LIMIT 1",
+    [primeiroDiaMes, unidade]
+  );
+  if (fechDisp.length > 0) {
+    return { valor: Number(fechDisp[0].saldo_disponivel), encontrado: true };
+  }
+
+  // ── Passo 2: Reconstrói o Saldo Final Disponível do mês imediatamente anterior ──
+  const [anoSel, mesSelNum] = mes.split('-').map(Number);
+  const mesAntNum = mesSelNum === 1 ? 12 : mesSelNum - 1;
+  const anoAnt    = mesSelNum === 1 ? anoSel - 1 : anoSel;
+  const mesAnt    = `${anoAnt}-${String(mesAntNum).padStart(2, '0')}`;
+
+  const saldoFinalMesAnt = await calcSaldoFinalMes(mesAnt);
+  if (saldoFinalMesAnt > 0) {
+    return { valor: saldoFinalMesAnt, encontrado: true };
+  }
+
+  // ── Passo 3: Qualquer saldo_anterior > 0 de qualquer mês anterior (último dado histórico) ──
+  const fechQualquer = await db.select<{ saldo_anterior: number | null }[]>(
+    "SELECT saldo_anterior FROM caixa_fechamento WHERE data < $1 AND unidade = $2 AND saldo_anterior > 0 ORDER BY data DESC LIMIT 1",
+    [primeiroDiaMes, unidade]
+  );
+  if (fechQualquer.length > 0) {
+    return { valor: Number(fechQualquer[0].saldo_anterior), encontrado: true };
+  }
+
+  // ── Passo 4: saldo_anterior do mês atual (valor que o usuário digitou ao abrir este mês) ──
+  const fechMesAtual = await db.select<{ saldo_anterior: number | null }[]>(
+    "SELECT saldo_anterior FROM caixa_fechamento WHERE data LIKE $1 AND unidade = $2 AND saldo_anterior > 0 ORDER BY data ASC LIMIT 1",
+    [`${mes}%`, unidade]
+  );
+  if (fechMesAtual.length > 0) {
+    return { valor: Number(fechMesAtual[0].saldo_anterior), encontrado: true };
+  }
+
+  return { valor: 0, encontrado: false };
 }
