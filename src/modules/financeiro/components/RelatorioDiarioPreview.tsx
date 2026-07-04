@@ -268,7 +268,7 @@ export function RelatorioDiarioPreview({
                 </tr>
                 <tr>
                   <td colSpan={2} style={{ border: '1px solid #eee', padding: '6px 7px', fontSize: 8.5, color: '#555', lineHeight: 1.5 }}>
-                    Esta célula cruza o dinheiro físico e digital com o fluxo do sistema. A lógica é: (Saldo Anterior + Tudo o que foi Contado) - Despesas - Repasses. O resultado <strong>deve ser R$ 0,00</strong>. Se diferente, significa que há um erro de lançamento no histórico ou divergência no dinheiro físico.
+                    Esta célula cruza o que foi recebido em Dinheiro e PIX com as entradas registradas no sistema. <strong>A lógica é:</strong> Dinheiro + PIX deve ser igual ao Total de Entradas. O resultado <strong>deve ser R$ 0,00</strong> — se diferente, há entradas lançadas sem forma de recebimento correspondente ou divergência no valor conferido.
                   </td>
                 </tr>
               </tbody>

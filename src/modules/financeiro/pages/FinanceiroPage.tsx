@@ -313,13 +313,16 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
   const totalSaidasDia   = lancamentosDia.filter(l => l.tipo === 'SAIDA').reduce((s, l) => s + l.valor, 0);
   const saldoDia         = totalEntradasDia - totalSaidasDia;
   const saldoAntNum      = parseFloat(saldoAnterior || '0') || 0;
-  const saldoRealCaixa   = saldoAntNum + saldoDia;
 
   // Conferência Física
+  // Dinheiro/PIX são auto-populados pelas ENTRADAS do período (por método),
+  // então a conferência compara com o Total de Entradas — mesma lógica dos
+  // relatórios impressos. O Saldo Anterior NÃO entra aqui: ele é saldo
+  // herdado, não um recebimento a conferir.
   const dinheiroNum = parseFloat(dinheiro || '0') || 0;
   const pixNum      = parseFloat(pix || '0') || 0;
   const totalConferido = dinheiroNum + pixNum;
-  const diferenca   = totalConferido - saldoRealCaixa;
+  const diferenca   = totalConferido - totalEntradasDia;
   const conferidoOk = Math.abs(diferenca) < 0.01;
 
   // Partilha em cascata sobre saldo real do caixa
