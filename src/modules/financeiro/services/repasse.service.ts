@@ -63,8 +63,14 @@ export function dbRowToPartilha(row: Record<string, unknown>): ConfigPartilha {
 
 export interface SaldoAnteriorResolvido {
   valor: number;
-  /** true quando o valor veio de dado gravado no banco — a tela bloqueia a edição nesse caso */
-  encontrado: boolean;
+  /**
+   * De onde o valor veio:
+   *  - 'historico': conciliado a partir de meses anteriores — a tela bloqueia a edição
+   *  - 'mes_atual': digitado pelo usuário no próprio mês — permanece editável,
+   *    para que o procedimento de correção (zerar e salvar) funcione
+   *  - 'nenhum': sem dado — campo livre
+   */
+  origem: 'historico' | 'mes_atual' | 'nenhum';
 }
 
 /**
@@ -115,7 +121,7 @@ export async function resolverSaldoAnteriorConciliado(mes: string, unidade: stri
     [primeiroDiaMes, unidade]
   );
   if (fechDisp.length > 0) {
-    return { valor: Number(fechDisp[0].saldo_disponivel), encontrado: true };
+    return { valor: Number(fechDisp[0].saldo_disponivel), origem: 'historico' };
   }
 
   // ── Passo 2: Reconstrói o Saldo Final Disponível do mês imediatamente anterior ──
@@ -126,7 +132,7 @@ export async function resolverSaldoAnteriorConciliado(mes: string, unidade: stri
 
   const saldoFinalMesAnt = await calcSaldoFinalMes(mesAnt);
   if (saldoFinalMesAnt > 0) {
-    return { valor: saldoFinalMesAnt, encontrado: true };
+    return { valor: saldoFinalMesAnt, origem: 'historico' };
   }
 
   // ── Passo 3: Qualquer saldo_anterior > 0 de qualquer mês anterior (último dado histórico) ──
@@ -135,7 +141,7 @@ export async function resolverSaldoAnteriorConciliado(mes: string, unidade: stri
     [primeiroDiaMes, unidade]
   );
   if (fechQualquer.length > 0) {
-    return { valor: Number(fechQualquer[0].saldo_anterior), encontrado: true };
+    return { valor: Number(fechQualquer[0].saldo_anterior), origem: 'historico' };
   }
 
   // ── Passo 4: saldo_anterior do mês atual (valor que o usuário digitou ao abrir este mês) ──
@@ -144,8 +150,8 @@ export async function resolverSaldoAnteriorConciliado(mes: string, unidade: stri
     [`${mes}%`, unidade]
   );
   if (fechMesAtual.length > 0) {
-    return { valor: Number(fechMesAtual[0].saldo_anterior), encontrado: true };
+    return { valor: Number(fechMesAtual[0].saldo_anterior), origem: 'mes_atual' };
   }
 
-  return { valor: 0, encontrado: false };
+  return { valor: 0, origem: 'nenhum' };
 }

@@ -162,9 +162,12 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
 
     // ── Saldo Anterior Conciliado: fonte única compartilhada com os relatórios ──
     try {
-      const { valor, encontrado } = await resolverSaldoAnteriorConciliado(dataSel.slice(0, 7), unidade);
+      const { valor, origem } = await resolverSaldoAnteriorConciliado(dataSel.slice(0, 7), unidade);
       setSaldoAnterior(String(valor));
-      setSaldoAnteriorBloqueado(encontrado);
+      // Só bloqueia quando o valor foi conciliado de meses anteriores.
+      // Valor digitado no próprio mês fica editável — é assim que o usuário
+      // corrige um saldo registrado por engano (zera e salva).
+      setSaldoAnteriorBloqueado(origem === 'historico');
     } catch (err) { console.error('[carregarConferencia] erro:', err); setSaldoAnterior('0'); setSaldoAnteriorBloqueado(false); }
   }, [dataSel, dataSelFim, unidade, buscarFechamento]);
 
@@ -655,7 +658,7 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
               </div>
             ))}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #f2f4f7', fontSize: 13, gap: 12 }}>
-              <span style={{ color: '#667085', whiteSpace: 'nowrap' }}>Saldo Anterior Conciliado {saldoAnteriorBloqueado && <span title="Valor calculado automaticamente. Não pode ser alterado após o primeiro lançamento." style={{ cursor: 'help' }}>🔒</span>}</span>
+              <span style={{ color: '#667085', whiteSpace: 'nowrap' }}>Saldo Anterior Conciliado {saldoAnteriorBloqueado && <span title="Valor conciliado automaticamente a partir de meses anteriores. Não pode ser alterado." style={{ cursor: 'help' }}>🔒</span>}</span>
               <input
                 type="number"
                 step="0.01"
@@ -714,7 +717,7 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
                 </div>
               </div>
               <div>
-                <label style={lbl}>Saldo Anterior Conciliado R$ {saldoAnteriorBloqueado && <span title="Bloqueado — valor já conciliado" style={{ cursor: 'help' }}>🔒</span>}</label>
+                <label style={lbl}>Saldo Anterior Conciliado R$ {saldoAnteriorBloqueado && <span title="Bloqueado — valor conciliado de meses anteriores" style={{ cursor: 'help' }}>🔒</span>}</label>
                 <input style={{ ...inp, background: saldoAnteriorBloqueado ? '#f9fafb' : undefined, color: saldoAnteriorBloqueado ? '#98a2b3' : undefined, cursor: saldoAnteriorBloqueado ? 'not-allowed' : undefined }} type="number" step="0.01" value={saldoAnterior} onChange={e => { if (!saldoAnteriorBloqueado) { setSaldoAnterior(e.target.value); setConfSalva(false); } }} readOnly={saldoAnteriorBloqueado} placeholder="0,00" />
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '8px 12px', background: '#f9fafb', borderRadius: 8 }}>
