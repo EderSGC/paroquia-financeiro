@@ -75,7 +75,12 @@ export function RelatorioMensalPreview({ paroquia, unidade, mes, lancamentos, co
       } catch { /* silencioso */ }
     };
     carregar();
-  }, [mes, unidade]);
+    // Recarrega quando qualquer mutação do financeiro acontece com o preview aberto —
+    // a folha deve corresponder sempre ao estado atual do sistema.
+    const onRefresh = () => { carregar(); };
+    window.addEventListener('financeiro:refresh', onRefresh);
+    return () => window.removeEventListener('financeiro:refresh', onRefresh);
+  }, [mes, unidade, lancamentos]);
 
   const lancMes = lancamentos
     .filter(l => l.data?.startsWith(mes) && (unidade === 'TODOS' || l.origem === unidade))

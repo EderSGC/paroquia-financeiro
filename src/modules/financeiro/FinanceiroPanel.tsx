@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getDb } from "@core/database";
-import { calcularRepasse, dbRowToPartilha } from "./services/repasse.service";
+import { calcularRepasse, dbRowToPartilha, resolverSaldoAnteriorConciliado } from "./services/repasse.service";
 import { PanelSection, PanelDivider, PanelRow } from "@/components/ui/SectionHeader";
 import { hasPermission } from "@core/auth/permissions";
 import type { Usuario } from "@core/types/app.types";
@@ -80,40 +80,34 @@ export function FinanceiroPanel({ usuario }: { usuario?: Usuario }) {
 
         const { totalRepasse, saldoDisponivel: saldoRealMes } = calcularRepasse(receitaMes - despesaMes, dbRowToPartilha(cfg));
 
-        // Saldo em tempo real por comunidade
-        // Lógica: último fechamento salvo + movimentos PÓS-fechamento com repasse aplicado
+        // Saldo em tempo real por comunidade — MESMA fórmula da FinanceiroPage:
+        // Saldo Anterior Conciliado (fonte única) + movimento do mês corrente com repasse.
+        // Considera comunidades com lançamentos ativos OU com fechamento registrado.
         const unitsResult = await db
-          .select<{ origem: string }[]>(
-            `SELECT DISTINCT origem FROM lancamentos WHERE origem IS NOT NULL AND origem != '' AND deleted_at IS NULL${comSql} ORDER BY origem`,
-            comParam
+          .select<{ unidade: string }[]>(
+            `SELECT origem AS unidade FROM lancamentos WHERE origem IS NOT NULL AND origem != '' AND deleted_at IS NULL${comSql}
+             UNION
+             SELECT unidade FROM caixa_fechamento WHERE unidade IS NOT NULL AND unidade != ''${comunidadeFiltro ? " AND unidade = ?" : ""}
+             ORDER BY 1`,
+            [...comParam, ...comParam]
           )
-          .catch(() => [] as { origem: string }[]);
+          .catch(() => [] as { unidade: string }[]);
 
         const unitSaldos: UnitData[] = [];
 
-        for (const { origem: unit } of unitsResult) {
+        for (const { unidade: unit } of unitsResult) {
           if (!unit) continue;
 
-          // Último fechamento desta unidade (pode não existir)
-          const closingRows = await db
-            .select<Record<string, unknown>[]>(
-              "SELECT COALESCE(saldo_disponivel,0) as sd, data FROM caixa_fechamento WHERE unidade=? ORDER BY data DESC LIMIT 1",
-              [unit]
-            )
-            .catch(() => [] as Record<string, unknown>[]);
+          const { valor: saldoAnterior } = await resolverSaldoAnteriorConciliado(anoMes, unit);
 
-          const lastClose = closingRows[0];
-          const saldoAnterior = toNum(lastClose?.sd);
-          const lastDate = String(lastClose?.data ?? "1900-01-01");
-
-          // Movimentos após o último fechamento (entrada e saída)
+          // Movimento do mês corrente da unidade
           const movRows = await db
             .select<Record<string, unknown>[]>(
               `SELECT
                 COALESCE(SUM(CASE WHEN tipo='ENTRADA' THEN valor ELSE 0 END),0) as ent,
                 COALESCE(SUM(CASE WHEN tipo='SAIDA'   THEN valor ELSE 0 END),0) as sai
-               FROM lancamentos WHERE origem=? AND data > ? AND deleted_at IS NULL`,
-              [unit, lastDate]
+               FROM lancamentos WHERE origem=? AND substr(data,1,7)=? AND deleted_at IS NULL`,
+              [unit, anoMes]
             )
             .catch(() => [] as Record<string, unknown>[]);
 
