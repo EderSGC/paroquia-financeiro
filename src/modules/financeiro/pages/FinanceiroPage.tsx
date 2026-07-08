@@ -6,7 +6,7 @@ import { hasPermission } from '@core/auth/permissions';
 import type { ConfiguracaoPartilha } from '../../../core/types/entities';
 import { getDb } from '@core/database';
 import { FinanceiroRepository } from '../repository/financeiro.repository';
-import { calcularRepasse, dbRowToPartilha, resolverSaldoAnteriorConciliado } from '../services/repasse.service';
+import { calcularRepasse, dbRowToPartilha, resolverSaldoAnteriorConciliado, round2 } from '../services/repasse.service';
 import { RelatorioMensalPreview } from '../components/RelatorioMensalPreview';
 import { RelatorioDiarioPreview } from '../components/RelatorioDiarioPreview';
 import { useToast } from '@core/ui/Toast';
@@ -28,6 +28,19 @@ interface RepasseMes {
 type AbaFinanceiro = 'caixa' | 'historico' | 'repasses';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+/* Campos monetários digitáveis — máscara pt-BR (1.234,56) */
+const fmtMoneyInput = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** Digitos viram centavos: "447135" → "4.471,35". Aceita colar "4471.35" ou "4.471,35". */
+const maskMoney = (v: string) => {
+  const d = v.replace(/\D/g, '');
+  return d ? fmtMoneyInput(parseInt(d, 10) / 100) : '';
+};
+/** Converte o texto mascarado de volta para número: "4.471,35" → 4471.35 */
+const parseMoney = (v: string) => {
+  const n = parseFloat(v.replace(/\./g, '').replace(',', '.'));
+  return isNaN(n) ? 0 : n;
+};
 const hoje = () => new Date().toISOString().split('T')[0];
 
 const inp: React.CSSProperties = { width: '100%', padding: '9px 12px', borderRadius: 8, border: '1px solid #d0d5dd', fontSize: 13, boxSizing: 'border-box', fontFamily: 'inherit' };
@@ -99,6 +112,7 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
       });
       setEditando(null);
       await carregarDados();
+      await sincronizarConferencia();
       showToast('Lançamento corrigido com sucesso!', 'success');
     } catch (e) {
       console.error(e);
@@ -137,6 +151,36 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
   const [showLixeira, setShowLixeira] = useState(false);
   const [lixeiraItems, setLixeiraItems] = useState<Lancamento[]>([]);
 
+  // Soma as ENTRADAS do dia por método — base do auto-preenchimento da Conferência Física
+  const somaEntradasPorMetodo = useCallback(async (dia: string, unid: string) => {
+    const db = await getDb();
+    const rows = await db.select<{ metodo: string; total: number }[]>(
+      "SELECT metodo, SUM(valor) AS total FROM lancamentos WHERE data = ? AND origem = ? AND tipo = 'ENTRADA' AND deleted_at IS NULL GROUP BY metodo",
+      [dia, unid]
+    ).catch(() => [] as { metodo: string; total: number }[]);
+    return {
+      dinheiroDia: rows.filter(r => r.metodo === 'DINHEIRO').reduce((s, r) => s + (r.total || 0), 0),
+      pixDia:      rows.filter(r => r.metodo === 'PIX').reduce((s, r) => s + (r.total || 0), 0),
+    };
+  }, []);
+
+  // Editar/excluir lançamento invalida o auto-preenchimento da conferência:
+  // re-sincroniza Dinheiro/PIX com o livro e, se a conferência do dia já
+  // estava salva, marca como pendente para o usuário salvar de novo.
+  const sincronizarConferencia = useCallback(async () => {
+    if (dataSel !== dataSelFim || !unidade || unidade === 'TODOS') return;
+    const { dinheiroDia, pixDia } = await somaEntradasPorMetodo(dataSel, unidade);
+    const novoDinheiro = dinheiroDia > 0 ? fmtMoneyInput(dinheiroDia) : '';
+    const novoPix      = pixDia > 0 ? fmtMoneyInput(pixDia) : '';
+    if (novoDinheiro === dinheiro && novoPix === pix) return;
+    setDinheiro(novoDinheiro);
+    setPix(novoPix);
+    if (confSalva) {
+      setConfSalva(false);
+      showToast('Lançamentos alterados — Conferência Física re-sincronizada. Confira e salve novamente.', 'info');
+    }
+  }, [dataSel, dataSelFim, unidade, dinheiro, pix, confSalva, somaEntradasPorMetodo, showToast]);
+
   // Carregar conferência física e saldo anterior
   const carregarConferencia = useCallback(async () => {
     const isSingleDay = dataSel === dataSelFim;
@@ -145,14 +189,24 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
     if (isSingleDay) {
       const f = await buscarFechamento(dataSel, unidade);
       if (f) {
-        setDinheiro(String(f.dinheiro ?? ''));
-        setPix(String(f.pix ?? ''));
+        setDinheiro(f.dinheiro != null ? fmtMoneyInput(Number(f.dinheiro)) : '');
+        setPix(f.pix != null ? fmtMoneyInput(Number(f.pix)) : '');
         setObsConf(f.observacao ?? '');
         setConfSalva(true);
         // NÃO usa f.saldo_anterior aqui — pode estar desatualizado.
         // O saldo anterior é calculado sempre a partir do mês anterior (abaixo).
       } else {
-        setDinheiro(''); setPix(''); setObsConf(''); setConfSalva(false);
+        setObsConf(''); setConfSalva(false);
+        // Sem fechamento salvo: pré-popula Dinheiro/PIX com as entradas já
+        // lançadas no dia (por método) — cobre dias retroativos, onde o
+        // incremento feito no handleLancar seria perdido ao trocar de data
+        if (unidade) {
+          const { dinheiroDia, pixDia } = await somaEntradasPorMetodo(dataSel, unidade);
+          setDinheiro(dinheiroDia > 0 ? fmtMoneyInput(dinheiroDia) : '');
+          setPix(pixDia > 0 ? fmtMoneyInput(pixDia) : '');
+        } else {
+          setDinheiro(''); setPix('');
+        }
       }
     } else {
       setDinheiro(''); setPix(''); setObsConf(''); setConfSalva(false);
@@ -163,13 +217,13 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
     // ── Saldo Anterior Conciliado: fonte única compartilhada com os relatórios ──
     try {
       const { valor, origem } = await resolverSaldoAnteriorConciliado(dataSel.slice(0, 7), unidade);
-      setSaldoAnterior(String(valor));
+      setSaldoAnterior(fmtMoneyInput(valor));
       // Só bloqueia quando o valor foi conciliado de meses anteriores.
       // Valor digitado no próprio mês fica editável — é assim que o usuário
       // corrige um saldo registrado por engano (zera e salva).
       setSaldoAnteriorBloqueado(origem === 'historico');
-    } catch (err) { console.error('[carregarConferencia] erro:', err); setSaldoAnterior('0'); setSaldoAnteriorBloqueado(false); }
-  }, [dataSel, dataSelFim, unidade, buscarFechamento]);
+    } catch (err) { console.error('[carregarConferencia] erro:', err); setSaldoAnterior('0,00'); setSaldoAnteriorBloqueado(false); }
+  }, [dataSel, dataSelFim, unidade, buscarFechamento, somaEntradasPorMetodo]);
 
   useEffect(() => { carregarConferencia(); }, [carregarConferencia]);
 
@@ -283,7 +337,7 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
       const dados: RepasseMes[] = rows.map(row => {
         const entradas  = toN(row.entradas);
         const saidas    = toN(row.saidas);
-        const saldoBruto = Math.max(0, entradas - saidas);
+        const saldoBruto = entradas - saidas;
         const r = calcularRepasse(saldoBruto, partilhaCfg);
         return { mes: String(row.mes ?? ''), entradas, saidas, saldoBruto, ...r };
       });
@@ -312,15 +366,15 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
   const totalEntradasDia = lancamentosDia.filter(l => l.tipo === 'ENTRADA').reduce((s, l) => s + l.valor, 0);
   const totalSaidasDia   = lancamentosDia.filter(l => l.tipo === 'SAIDA').reduce((s, l) => s + l.valor, 0);
   const saldoDia         = totalEntradasDia - totalSaidasDia;
-  const saldoAntNum      = parseFloat(saldoAnterior || '0') || 0;
+  const saldoAntNum      = parseMoney(saldoAnterior);
 
   // Conferência Física
   // Dinheiro/PIX são auto-populados pelas ENTRADAS do período (por método),
   // então a conferência compara com o Total de Entradas — mesma lógica dos
   // relatórios impressos. O Saldo Anterior NÃO entra aqui: ele é saldo
   // herdado, não um recebimento a conferir.
-  const dinheiroNum = parseFloat(dinheiro || '0') || 0;
-  const pixNum      = parseFloat(pix || '0') || 0;
+  const dinheiroNum = parseMoney(dinheiro);
+  const pixNum      = parseMoney(pix);
   const totalConferido = dinheiroNum + pixNum;
   const diferenca   = totalConferido - totalEntradasDia;
   const conferidoOk = Math.abs(diferenca) < 0.01;
@@ -335,10 +389,9 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
       showToast('Preencha o Histórico e o Valor.', 'error');
       return;
     }
-    // Bloqueia lançamento fora do mês atual
-    const mesAtual = hoje().slice(0, 7);
-    if (dataLanc.slice(0, 7) !== mesAtual) {
-      showToast(`Data "${dataLanc.split('-').reverse().join('/')}" pertence a outro mês. Utilize uma data do mês atual.`, 'error');
+    // Permite lançamentos retroativos (fichas de meses anteriores); bloqueia apenas datas futuras
+    if (dataLanc > hoje()) {
+      showToast(`Data "${dataLanc.split('-').reverse().join('/')}" é futura. Utilize uma data até hoje.`, 'error');
       return;
     }
     try {
@@ -353,16 +406,21 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
         origem: unidade,
         metodo,
       });
-      // Auto-popula Conferência Física conforme modo da entrada
-      if (tipoForm === 'ENTRADA') {
+      if (dataLanc < dataSel || dataLanc > dataSelFim) {
+        // Lançamento fora do período exibido (ex.: retroativo): move o período
+        // para a data lançada — lista, fluxo e conferência recarregam para esse dia
+        setDataSel(dataLanc); setDataSelFim(dataLanc);
+      } else if (tipoForm === 'ENTRADA') {
+        // Auto-popula Conferência Física conforme modo da entrada
         if (modoEntrada === 'DINHEIRO') {
-          setDinheiro(prev => String((parseFloat(prev || '0') + vlr).toFixed(2)));
+          setDinheiro(prev => fmtMoneyInput(parseMoney(prev) + vlr));
         } else {
-          setPix(prev => String((parseFloat(prev || '0') + vlr).toFixed(2)));
+          setPix(prev => fmtMoneyInput(parseMoney(prev) + vlr));
         }
         setConfSalva(false);
       }
-      setDataLanc(hoje()); setDocNum(''); setHist(''); setVlrEntrada(''); setVlrSaida('');
+      // Mantém dataLanc: facilita lançar vários registros do mesmo dia retroativo
+      setDocNum(''); setHist(''); setVlrEntrada(''); setVlrSaida('');
       await carregarDados();
     } catch (e) { console.error(e); showToast('Erro ao lançar.', 'error'); }
   }
@@ -372,11 +430,12 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
     if (!ok) return;
     await FinanceiroRepository.lancamentos.softDelete(id);
     await carregarDados();
+    await sincronizarConferencia();
   }
 
   async function handleSalvarConferencia() {
     // Grava o Saldo Final Disponível (saldoAnterior + saldoReal após repasses) para ser usado como saldo anterior do próximo mês
-    await salvarFechamento(dataSel, unidade, dinheiroNum, pixNum, saldoAntNum, obsConf, saldoAntNum + partilha.saldoDisponivel);
+    await salvarFechamento(dataSel, unidade, dinheiroNum, pixNum, saldoAntNum, obsConf, round2(saldoAntNum + partilha.saldoDisponivel));
     setConfSalva(true);
     await calcularSaldoFinalDisponivel();
     showToast('Conferência salva com sucesso!', 'success');
@@ -663,10 +722,10 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #f2f4f7', fontSize: 13, gap: 12 }}>
               <span style={{ color: '#667085', whiteSpace: 'nowrap' }}>Saldo Anterior Conciliado {saldoAnteriorBloqueado && <span title="Valor conciliado automaticamente a partir de meses anteriores. Não pode ser alterado." style={{ cursor: 'help' }}>🔒</span>}</span>
               <input
-                type="number"
-                step="0.01"
+                type="text"
+                inputMode="decimal"
                 value={saldoAnterior}
-                onChange={e => { if (!saldoAnteriorBloqueado) { setSaldoAnterior(e.target.value); setConfSalva(false); } }}
+                onChange={e => { if (!saldoAnteriorBloqueado) { setSaldoAnterior(maskMoney(e.target.value)); setConfSalva(false); } }}
                 readOnly={saldoAnteriorBloqueado}
                 style={{ ...inp, width: 130, textAlign: 'right', fontWeight: 700, color: saldoAnteriorBloqueado ? '#98a2b3' : '#344054', padding: '5px 8px', fontSize: 13, background: saldoAnteriorBloqueado ? '#f9fafb' : undefined, cursor: saldoAnteriorBloqueado ? 'not-allowed' : undefined }}
                 placeholder="0,00"
@@ -712,16 +771,16 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                 <div>
                   <label style={lbl}>Dinheiro R$</label>
-                  <input style={inp} type="number" step="0.01" value={dinheiro} onChange={e => { setDinheiro(e.target.value); setConfSalva(false); }} placeholder="0,00" />
+                  <input style={inp} type="text" inputMode="decimal" value={dinheiro} onChange={e => { setDinheiro(maskMoney(e.target.value)); setConfSalva(false); }} placeholder="0,00" />
                 </div>
                 <div>
                   <label style={lbl}>PIX R$</label>
-                  <input style={inp} type="number" step="0.01" value={pix} onChange={e => { setPix(e.target.value); setConfSalva(false); }} placeholder="0,00" />
+                  <input style={inp} type="text" inputMode="decimal" value={pix} onChange={e => { setPix(maskMoney(e.target.value)); setConfSalva(false); }} placeholder="0,00" />
                 </div>
               </div>
               <div>
                 <label style={lbl}>Saldo Anterior Conciliado R$ {saldoAnteriorBloqueado && <span title="Bloqueado — valor conciliado de meses anteriores" style={{ cursor: 'help' }}>🔒</span>}</label>
-                <input style={{ ...inp, background: saldoAnteriorBloqueado ? '#f9fafb' : undefined, color: saldoAnteriorBloqueado ? '#98a2b3' : undefined, cursor: saldoAnteriorBloqueado ? 'not-allowed' : undefined }} type="number" step="0.01" value={saldoAnterior} onChange={e => { if (!saldoAnteriorBloqueado) { setSaldoAnterior(e.target.value); setConfSalva(false); } }} readOnly={saldoAnteriorBloqueado} placeholder="0,00" />
+                <input style={{ ...inp, background: saldoAnteriorBloqueado ? '#f9fafb' : undefined, color: saldoAnteriorBloqueado ? '#98a2b3' : undefined, cursor: saldoAnteriorBloqueado ? 'not-allowed' : undefined }} type="text" inputMode="decimal" value={saldoAnterior} onChange={e => { if (!saldoAnteriorBloqueado) { setSaldoAnterior(maskMoney(e.target.value)); setConfSalva(false); } }} readOnly={saldoAnteriorBloqueado} placeholder="0,00" />
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '8px 12px', background: '#f9fafb', borderRadius: 8 }}>
                 <span style={{ color: '#667085' }}>Total Conferido</span>

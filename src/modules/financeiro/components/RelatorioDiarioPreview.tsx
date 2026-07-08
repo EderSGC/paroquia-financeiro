@@ -351,7 +351,7 @@ export function RelatorioDiarioPreview({
               <div style={{ fontSize: 10, fontWeight: 600, color: '#444' }}>Assinaturas</div>
               <div>
                 <div style={{ borderTop: '1px solid #222', paddingTop: 5, fontSize: 10, textAlign: 'center' }}>
-                  Coordenador Financeiro da Comunidade
+                  Tesoureiro(a) da Comunidade
                 </div>
               </div>
               <div>

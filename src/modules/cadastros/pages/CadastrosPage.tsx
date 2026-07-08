@@ -23,6 +23,16 @@ const btnPrimario: React.CSSProperties = { padding: '9px 20px', borderRadius: 8,
 const btnAcao: React.CSSProperties = { padding: '5px 10px', borderRadius: 6, border: '1px solid #d0d5dd', cursor: 'pointer', fontSize: 12, background: 'white', color: '#344054' };
 const btnPerigo: React.CSSProperties = { ...btnAcao, color: '#b42318', borderColor: '#fda29b' };
 
+/** Máscara de telefone BR: (00) 0000-0000 (fixo) ou (00) 00000-0000 (celular). */
+function maskTelefone(v: string): string {
+  const d = v.replace(/\D/g, '').slice(0, 11);
+  if (d.length === 0) return '';
+  if (d.length <= 2)  return `(${d}`;
+  if (d.length <= 6)  return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+}
+
 const TITULOS: Record<AbaCadastro, { titulo: string; subtitulo: string }> = {
   comunidades: { titulo: 'Comunidades', subtitulo: 'As comunidades cadastradas aparecem no seletor de unidade do Movimento do Caixa.' },
   fieis:       { titulo: 'Fiéis',        subtitulo: 'Cadastro de fiéis para vínculo com lançamentos de dízimo.' },
@@ -60,7 +70,7 @@ function CadastroComunidades({ comunidadeFiltro }: { comunidadeFiltro: string | 
     setNome(c.nome);
     setEndereco(c.endereco ?? '');
     setCoordNome(c.coordenador_nome ?? '');
-    setCoordTel(c.coordenador_tel ?? '');
+    setCoordTel(maskTelefone(c.coordenador_tel ?? ''));
   }
 
   async function salvar(e: React.FormEvent) {
@@ -107,12 +117,12 @@ function CadastroComunidades({ comunidadeFiltro }: { comunidadeFiltro: string | 
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto auto', gap: 12, alignItems: 'end' }}>
           <div>
-            <label style={lbl}>Coordenador(a)</label>
+            <label style={lbl}>Tesoureiro(a)</label>
             <input style={inp} value={coordNome} onChange={e => setCoordNome(e.target.value)} />
           </div>
           <div>
             <label style={lbl}>Telefone</label>
-            <input style={inp} value={coordTel} onChange={e => setCoordTel(e.target.value)} placeholder="(00) 00000-0000" />
+            <input style={inp} type="tel" inputMode="tel" value={coordTel} onChange={e => setCoordTel(maskTelefone(e.target.value))} placeholder="(00) 00000-0000" />
           </div>
           <button type="submit" style={btnPrimario}>{editandoId ? 'Salvar Alterações' : 'Cadastrar'}</button>
           {editandoId && <button type="button" style={btnAcao} onClick={limpar}>Cancelar</button>}
@@ -126,7 +136,7 @@ function CadastroComunidades({ comunidadeFiltro }: { comunidadeFiltro: string | 
             <tr>
               <th style={th}>Nome</th>
               <th style={th}>Endereço</th>
-              <th style={th}>Coordenador(a)</th>
+              <th style={th}>Tesoureiro(a)</th>
               {!somenteLeitura && <th style={{ ...th, width: 140 }}>Ações</th>}
             </tr>
           </thead>
@@ -200,7 +210,7 @@ function CadastroFieis({ somenteDizimistas, comunidadeFiltro }: { somenteDizimis
   function editar(f: Fiel) {
     setEditandoId(f.id);
     setNome(f.nome);
-    setTelefone(f.telefone ?? '');
+    setTelefone(maskTelefone(f.telefone ?? ''));
     setComunidade(f.comunidade ?? '');
     setDizimista(f.isDizimista === 1);
   }
@@ -266,7 +276,7 @@ function CadastroFieis({ somenteDizimistas, comunidadeFiltro }: { somenteDizimis
           </div>
           <div>
             <label style={lbl}>Telefone</label>
-            <input style={inp} value={telefone} onChange={e => setTelefone(e.target.value)} placeholder="(00) 00000-0000" />
+            <input style={inp} type="tel" inputMode="tel" value={telefone} onChange={e => setTelefone(maskTelefone(e.target.value))} placeholder="(00) 00000-0000" />
           </div>
           <div>
             <label style={lbl}>Comunidade</label>

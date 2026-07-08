@@ -433,7 +433,7 @@ export function RelatorioMensalPreview({ paroquia, unidade, mes, lancamentos, co
               <div style={{ display: 'flex', flexDirection: 'column', gap: 50, paddingBottom: 10 }}>
                 <div>
                   <div style={{ borderTop: '1px solid #222', paddingTop: 5, fontSize: 10, textAlign: 'center' }}>
-                    Coordenador Financeiro da Comunidade
+                    Tesoureiro(a) da Comunidade
                   </div>
                 </div>
                 <div>

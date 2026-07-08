@@ -15,6 +15,9 @@ export const PARTILHA_PADRAO: ConfigPartilha = {
   comunidade: 30, areaMissionaria: 40, arquidiocese: 29, fundoMissionario: 1,
 };
 
+/** Arredonda para 2 casas decimais — valores monetários nunca devem carregar dízimas de ponto flutuante. */
+export const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+
 /**
  * Aplica a cascata de repasses em ordem canônica.
  * Cada percentual incide sobre o restante após a dedução anterior:
@@ -24,28 +27,32 @@ export const PARTILHA_PADRAO: ConfigPartilha = {
  *   4. Fundo Missionário → sobre o restante após arquidiocese
  */
 export function calcularRepasse(saldoBase: number, cfg: ConfigPartilha): ResultadoRepasse {
-  const base = Math.max(0, saldoBase);
-  if (base === 0) {
+  if (saldoBase <= 0) {
+    // Déficit: não há o que repassar. O saldo negativo é devolvido em
+    // saldoDisponivel para ser abatido do saldo acumulado (Saldo Anterior) —
+    // o dinheiro em mãos é que cobre as despesas que excedem as entradas.
     return {
-      saldoBase: 0, comunidade: 0, areaMissionaria: 0,
-      arquidiocese: 0, fundoMissionario: 0, totalRepasse: 0, saldoDisponivel: 0,
+      saldoBase: round2(saldoBase), comunidade: 0, areaMissionaria: 0,
+      arquidiocese: 0, fundoMissionario: 0, totalRepasse: 0,
+      saldoDisponivel: round2(saldoBase),
     };
   }
-  const comunidade       = base * (cfg.comunidade / 100);
+  const base = saldoBase;
+  const comunidade       = round2(base * (cfg.comunidade / 100));
   const r1               = base - comunidade;
-  const areaMissionaria  = r1 * (cfg.areaMissionaria / 100);
+  const areaMissionaria  = round2(r1 * (cfg.areaMissionaria / 100));
   const r2               = r1 - areaMissionaria;
-  const arquidiocese     = r2 * (cfg.arquidiocese / 100);
+  const arquidiocese     = round2(r2 * (cfg.arquidiocese / 100));
   const r3               = r2 - arquidiocese;
-  const fundoMissionario = r3 * (cfg.fundoMissionario / 100);
-  const saldoDisponivel  = r3 - fundoMissionario;
+  const fundoMissionario = round2(r3 * (cfg.fundoMissionario / 100));
+  const saldoDisponivel  = round2(r3 - fundoMissionario);
   return {
     saldoBase: base,
     comunidade,
     areaMissionaria,
     arquidiocese,
     fundoMissionario,
-    totalRepasse: comunidade + areaMissionaria + arquidiocese + fundoMissionario,
+    totalRepasse: round2(comunidade + areaMissionaria + arquidiocese + fundoMissionario),
     saldoDisponivel,
   };
 }
@@ -107,10 +114,11 @@ export async function resolverSaldoAnteriorConciliado(mes: string, unidade: stri
     );
     const ent = lancs.filter(r => r.tipo === 'ENTRADA').reduce((s, r) => s + r.valor, 0);
     const sai = lancs.filter(r => r.tipo === 'SAIDA').reduce((s, r) => s + r.valor, 0);
-    const base = Math.max(0, ent - sai);
+    // Mês deficitário: o saldoDisponivel volta negativo e abate o saldo inicial
+    const base = ent - sai;
 
     const { saldoDisponivel } = calcularRepasse(base, dbRowToPartilha(cfg));
-    return saldoInicio + saldoDisponivel;
+    return round2(saldoInicio + saldoDisponivel);
   };
 
   const primeiroDiaMes = `${mes}-01`;
@@ -121,7 +129,7 @@ export async function resolverSaldoAnteriorConciliado(mes: string, unidade: stri
     [primeiroDiaMes, unidade]
   );
   if (fechDisp.length > 0) {
-    return { valor: Number(fechDisp[0].saldo_disponivel), origem: 'historico' };
+    return { valor: round2(Number(fechDisp[0].saldo_disponivel)), origem: 'historico' };
   }
 
   // ── Passo 2: Reconstrói o Saldo Final Disponível do mês imediatamente anterior ──
@@ -141,7 +149,7 @@ export async function resolverSaldoAnteriorConciliado(mes: string, unidade: stri
     [primeiroDiaMes, unidade]
   );
   if (fechQualquer.length > 0) {
-    return { valor: Number(fechQualquer[0].saldo_anterior), origem: 'historico' };
+    return { valor: round2(Number(fechQualquer[0].saldo_anterior)), origem: 'historico' };
   }
 
   // ── Passo 4: saldo_anterior do mês atual (valor que o usuário digitou ao abrir este mês) ──
@@ -150,7 +158,7 @@ export async function resolverSaldoAnteriorConciliado(mes: string, unidade: stri
     [`${mes}%`, unidade]
   );
   if (fechMesAtual.length > 0) {
-    return { valor: Number(fechMesAtual[0].saldo_anterior), origem: 'mes_atual' };
+    return { valor: round2(Number(fechMesAtual[0].saldo_anterior)), origem: 'mes_atual' };
   }
 
   return { valor: 0, origem: 'nenhum' };

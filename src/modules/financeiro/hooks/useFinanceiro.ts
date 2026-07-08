@@ -125,12 +125,12 @@ export const useFinanceiro = (options: UseFinanceiroOptions = {}) => {
   const calcularPartilha = (saldoBase?: number) => {
     let entradas = 0, saidas = 0, base: number;
     if (saldoBase !== undefined) {
-      base = Math.max(0, saldoBase);
+      base = saldoBase;
     } else {
       const lista = filtroUnidade === 'TODOS' ? dizimos : dizimos.filter(i => i.origem === filtroUnidade);
       entradas = lista.reduce((acc, cur) => cur.tipo === 'ENTRADA' ? acc + cur.valor : acc, 0);
       saidas   = lista.reduce((acc, cur) => cur.tipo === 'SAIDA'   ? acc + cur.valor : acc, 0);
-      base = Math.max(0, entradas - saidas);
+      base = entradas - saidas;
     }
     const r = calcularRepasse(base, configPartilha);
     return {
