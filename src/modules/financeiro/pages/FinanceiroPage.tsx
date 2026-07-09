@@ -382,6 +382,19 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
   // Partilha em cascata sobre saldo real do caixa
   const partilha = calcularPartilha(saldoDia);
 
+  // Saldo Final Disponível = dinheiro real em mãos na data final selecionada:
+  // acumula o mês inteiro (do dia 1º até a data), não só o período exibido.
+  // Um dia sem movimento não pode "esconder" o déficit já acumulado no mês.
+  const inicioMesSel = dataSel.slice(0, 7) + '-01';
+  const saldoMesAteData = totalGeral
+    .filter(l =>
+      l.data >= inicioMesSel && l.data <= dataSelFim &&
+      (unidade !== '' && (unidade === 'TODOS' || l.origem === unidade)))
+    .reduce((s, l) => s + (l.tipo === 'ENTRADA' ? l.valor : -l.valor), 0);
+  const partilhaMes = calcularPartilha(saldoMesAteData);
+  const saldoFinalNaData = saldoAntNum + partilhaMes.saldoDisponivel;
+  const dataFimFmt = `${dataSelFim.slice(8, 10)}/${dataSelFim.slice(5, 7)}`;
+
   async function handleLancar(e: React.FormEvent) {
     e.preventDefault();
     const vlr = parseFloat((tipoForm === 'ENTRADA' ? vlrEntrada : vlrSaida).replace(',', '.'));
@@ -434,8 +447,9 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
   }
 
   async function handleSalvarConferencia() {
-    // Grava o Saldo Final Disponível (saldoAnterior + saldoReal após repasses) para ser usado como saldo anterior do próximo mês
-    await salvarFechamento(dataSel, unidade, dinheiroNum, pixNum, saldoAntNum, obsConf, round2(saldoAntNum + partilha.saldoDisponivel));
+    // Grava o Saldo Final Disponível (saldoAnterior + saldo real do mês acumulado
+    // até o dia) para ser usado como saldo anterior do próximo mês
+    await salvarFechamento(dataSel, unidade, dinheiroNum, pixNum, saldoAntNum, obsConf, round2(saldoFinalNaData));
     setConfSalva(true);
     await calcularSaldoFinalDisponivel();
     showToast('Conferência salva com sucesso!', 'success');
@@ -736,13 +750,13 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
               <span style={{ color: '#667085' }}>Saldo Real (após repasses)</span>
               <span style={{ fontWeight: 700, color: partilha.saldoDisponivel >= 0 ? '#1f3b73' : '#dc2626' }}>{fmt(partilha.saldoDisponivel)}</span>
             </div>
-            {/* Saldo Final Disponível = Saldo Anterior + Saldo Real — idêntico à ficha de impressão */}
+            {/* Saldo Final Disponível = dinheiro real em mãos na data (mês acumulado) */}
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, background: '#1f3b73', margin: '8px -20px -20px', padding: '14px 20px', borderRadius: '0 0 14px 14px' }}>
               <div>
                 <div style={{ fontWeight: 800, color: 'white' }}>Saldo Final Disponível</div>
-                <div style={{ fontSize: 11, color: '#93c5fd', marginTop: 2 }}>Saldo Anterior + Saldo Real após repasses</div>
+                <div style={{ fontSize: 11, color: '#93c5fd', marginTop: 2 }}>Saldo Anterior + Saldo Real do mês até {dataFimFmt} ({fmt(partilhaMes.saldoDisponivel)})</div>
               </div>
-              <span style={{ fontWeight: 800, color: 'white', fontSize: 18, alignSelf: 'center' }}>{fmt(saldoAntNum + partilha.saldoDisponivel)}</span>
+              <span style={{ fontWeight: 800, color: 'white', fontSize: 18, alignSelf: 'center' }}>{fmt(saldoFinalNaData)}</span>
             </div>
           </div>
 
@@ -826,10 +840,10 @@ export function FinanceiroPage({ paroquia, usuario }: FinanceiroPageProps) {
             <div>
               <div style={{ fontSize: 11, fontWeight: 700, color: '#93c5fd', textTransform: 'uppercase' }}>Saldo Final Disponível</div>
               <div style={{ fontSize: 11, color: '#93c5fd', marginTop: 2 }}>
-                Saldo Anterior ({fmt(saldoAntNum)}) + Saldo Real após repasses ({fmt(partilha.saldoDisponivel)})
+                Saldo Anterior ({fmt(saldoAntNum)}) + Saldo Real do mês até {dataFimFmt} ({fmt(partilhaMes.saldoDisponivel)})
               </div>
             </div>
-            <div style={{ fontSize: 24, fontWeight: 800, color: 'white' }}>{fmt(saldoAntNum + partilha.saldoDisponivel)}</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: 'white' }}>{fmt(saldoFinalNaData)}</div>
           </div>
 
           {/* Botões de impressão */}
